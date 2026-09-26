@@ -3,6 +3,7 @@
 package router
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -47,4 +48,34 @@ func TestLiveRouting(t *testing.T) {
 		t.Fatalf("unexpected route: %s", r.Workflow)
 	}
 	t.Logf("native six-question routing: workflow=%s complexity=%s risk=%s model=%s", r.Workflow, r.Complexity, r.Risk, r.Model)
+}
+
+func TestLiveQuestionRouting(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(home, "", os.Environ(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.OpenRouter.APIKey == "" {
+		t.Skip("OpenRouter key absent")
+	}
+	budget := &jev.Budget{Max: 1}
+	j := JevRouter{Client: jev.New(c.OpenRouter.BaseURL, c.OpenRouter.APIKey, c.OpenRouter.Model, c.OpenRouter.Timeout, budget), Config: c.Router, Fallback: ManualRouter{Input: liveSelector{}}, Cleaner: safety.New(c.OpenRouter.APIKey)}
+	r, err := j.Route(t.Context(), RouteInput{Task: "посмотри и скажи о чём этот проект", Languages: []string{"Go"}, HasTaskfile: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Telemetry != nil {
+		data, err := json.Marshal(r.Telemetry.Answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("source=%s fallback=%s answers=%s", r.Source, r.FallbackReason, data)
+	}
+	if r.Source != "jev" || r.Workflow != "research" || budget.Used() != 1 {
+		t.Fatalf("question did not route automatically to research: source=%s workflow=%s fallback=%s", r.Source, r.Workflow, r.FallbackReason)
+	}
 }

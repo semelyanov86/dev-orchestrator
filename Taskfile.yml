@@ -65,4 +65,4 @@ tasks:
     cmds:
       - go test -count=1 -tags=integration -run TestReadOnlyProviders -v ./internal/agent -timeout 5m
       - go test -count=1 -tags=integration -run TestLiveNativeDecisions -v ./internal/router/jev -timeout 30s
-      - go test -count=1 -tags=integration -run TestLiveRouting -v ./internal/router -timeout 30s
+      - go test -count=1 -tags=integration -run TestLive -v ./internal/router -timeout 30s

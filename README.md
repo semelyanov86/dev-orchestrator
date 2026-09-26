@@ -58,7 +58,7 @@ dev fix-review --report /path/to/review.md "Fix confirmed findings"
 
 `dev ping` проверяет связь с установленными CLI двумя короткими запросами: Codex отвечает `ping`, Claude — `pong`. JEV, планирование, review, validation и повторные запросы не запускаются. На каждый provider действует timeout не более 30s. Вместо project instructions и полного report schema используется минимальный контракт `{"reply":"ping"}` / `{"reply":"pong"}`; tools выключены, cwd — пустой временный каталог, доступ к проекту остаётся read-only. Внутренний report и artifacts формируются локально из проверенного ответа. Служебный контекст самих CLI всё равно может расходовать tokens; точное количество не гарантируется.
 
-В интерактивном `dev` фразы `проверяю связь`, `проверка связи`, `ping`, `ping pong` и `это просто проверка. Ответь, что ты меня слышишь` выбирают `ping` локально, без JEV и ручного меню. Распознаётся вся фраза целиком; просьба проверить связь и затем изменить код проходит обычный routing.
+В интерактивном `dev` фразы `проверяю связь`, `проверка связи`, `ping`, `ping pong` и `это просто проверка. Ответь, что ты меня слышишь` выбирают `ping` локально, без JEV и ручного меню. Можно соединить фразы через запятую или `и`, например `проверка связи, тестируем соединение`. Распознаётся весь запрос целиком; просьба проверить связь и затем изменить код проходит обычный routing.
 
 Для большого текста используйте `--task-file path` или `--task-file -` (stdin до EOF). `--no-jev` отключает initial JEV routing и subsequent JEV decisions. Non-interactive запуск с недостающим workflow, plan/report или обязательным scope сохраняет вопрос и завершает `needs_input`, без ожидания ввода.
 
@@ -120,6 +120,8 @@ dev config path
 Ключ можно хранить в global config с permissions `0600`; в project config он запрещён. `dev config` redacts secrets. Локальные credentials не должны попадать в Git. Config arrays — отдельные executable/argv, без shell interpolation.
 
 JEV использует native [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request): `POST https://openrouter.ai/api/alpha/decisions`, `questions`/`state`, primitives `choice`, `score`, `noul`. Это не chat completions. Default model — `~typesafe/jev-latest`, HTTP timeout 10s, общий бюджет initial routing + gates 12 requests. Native score — дробное weighted значение zero-based levels с legend/probabilities; noul — вероятность yes. Engine проверяет shape, consistency, thresholds для каждого вопроса и разрешённые actions.
+
+Начальный routing описывает ожидаемый результат каждого workflow: вопрос «посмотри и скажи о чём этот проект» относится к `research`, а `investigate` предполагает конкретный сбой или поиск причины ошибки. Complexity/risk оценивают запрошенные действия; optional review/parallel questions имеют отдельные yes/no criteria. При недостаточной уверенности manual меню показывает имя отклонённого вопроса, полученную confidence/probability и требуемый порог.
 
 Missing key, timeout/network error, 4xx/5xx, invalid/uncertain/low-confidence response или exhausted budget переходят к manual/local fallback. Billable POST автоматически не повторяется. JEV получает только допустимый task text и минимальные metadata; code, diff, logs, credentials и customer data ему не передаются. Неоднозначный/чувствительный текст отключает initial provider routing. Subsequent gates передают только typed allowlist counters/enums.
 
