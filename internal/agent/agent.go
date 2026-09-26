@@ -35,6 +35,7 @@ type Request struct {
 	Mode       Mode
 	Timeout    time.Duration
 	DocsPaths  []string
+	ProbeReply string // A fixed ping/pong response; uses the minimal connection-test contract.
 }
 type Result struct {
 	Report      report.StepReport
@@ -90,12 +91,22 @@ func (c *CLI) Run(ctx context.Context, req Request) (Result, error) {
 	if c.Provider == "codex" && req.Mode != ReadOnly {
 		return result, errors.New("codex workflow roles are read-only")
 	}
+	if req.ProbeReply != "" && (req.Mode != ReadOnly || (req.ProbeReply != "ping" && req.ProbeReply != "pong")) {
+		return result, errors.New("connection probe requires a read-only ping/pong reply")
+	}
 	runtimeDir, err := os.MkdirTemp("", "dev-agent-step-*")
 	if err != nil {
 		return result, err
 	}
 	defer func() { _ = os.RemoveAll(runtimeDir) }()
-	if err := os.WriteFile(filepath.Join(runtimeDir, "schema.json"), []byte(report.Schema()), 0600); err != nil {
+	schema := report.Schema()
+	if req.ProbeReply != "" {
+		schema = probeSchema(req.ProbeReply)
+		if err := os.WriteFile(filepath.Join(runtimeDir, "instructions.md"), []byte("Connection test. Return only the requested JSON reply. Do not use tools."), 0600); err != nil {
+			return result, err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "schema.json"), []byte(schema), 0600); err != nil {
 		return result, err
 	}
 	args, err := c.arguments(req)
@@ -105,6 +116,14 @@ func (c *CLI) Run(ctx context.Context, req Request) (Result, error) {
 	sandbox, err := c.sandbox(req, runtimeDir)
 	if err != nil {
 		return result, err
+	}
+	if req.ProbeReply != "" {
+		sandbox = append(sandbox, "--dir", "/tmp/probe", "--chdir", "/tmp/probe")
+		for _, path := range []string{filepath.Join(c.Home, ".codex", "skills"), filepath.Join(c.Home, ".agents", "skills")} {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				sandbox = append(sandbox, "--tmpfs", path)
+			}
+		}
 	}
 	sandbox = append(sandbox, c.Command)
 	sandbox = append(sandbox, args...)
@@ -118,10 +137,22 @@ func (c *CLI) Run(ctx context.Context, req Request) (Result, error) {
 	if output.Truncated {
 		return result, errors.New("provider output exceeds size limit")
 	}
-	raw, err := decodeOutput(c.Provider, output.Stdout)
+	var raw string
+	if req.ProbeReply != "" && c.Provider == "claude" {
+		raw, err = decodeProbeClaude(output.Stdout)
+	} else {
+		raw, err = decodeOutput(c.Provider, output.Stdout)
+	}
 	if err != nil {
+		if req.ProbeReply != "" {
+			return result, fmt.Errorf("connection probe response: %w", err)
+		}
 		result.ReportError = err.Error()
 		return result, nil
+	}
+	if req.ProbeReply != "" {
+		result.Report, err = c.probeReport(req, raw)
+		return result, err
 	}
 	result.Report, err = report.Decode(raw, req.StepID, req.Stage)
 	if err != nil {
@@ -171,7 +202,16 @@ func (c *CLI) arguments(req Request) ([]string, error) {
 		if req.Mode == DocsOnly {
 			mode = "dontAsk"
 		}
-		args := []string{"--print", "--input-format", "text", "--output-format", "json", "--json-schema", report.Schema(), "--no-session-persistence", "--restricted", "--tools", tools, "--permission-mode", mode, "--permission-prompts", "none", "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config", "--settings", `{"disableAllHooks":true}`, "--no-chrome"}
+		if req.ProbeReply != "" {
+			tools = ""
+			mode = "dontAsk"
+		}
+		args := []string{"--print", "--input-format", "text", "--output-format", "json", "--no-session-persistence", "--restricted", "--tools", tools, "--permission-mode", mode, "--permission-prompts", "none", "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config", "--settings", `{"disableAllHooks":true}`, "--no-chrome"}
+		if req.ProbeReply != "" {
+			args = append(args, "--safe-mode", "--effort", "low", "--system-prompt", "Connection test. Return only the requested JSON reply.")
+		} else {
+			args = append(args, "--json-schema", report.Schema())
+		}
 		if req.Mode == DocsOnly {
 			if len(req.DocsPaths) == 0 {
 				return nil, errors.New("docs writer requires explicit paths")
@@ -194,11 +234,18 @@ func (c *CLI) arguments(req Request) ([]string, error) {
 	if c.Provider != "codex" {
 		return nil, errors.New("unknown agent provider")
 	}
-	args := []string{"--no-daemon", "--ask-for-approval", "never", "exec", "--sandbox", "read-only", "--cd", req.ProjectDir, "--json", "--color", "never", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--output-schema", "/tmp/schema.json"}
+	dir := req.ProjectDir
+	if req.ProbeReply != "" {
+		dir = "/tmp/probe"
+	}
+	args := []string{"--no-daemon", "--ask-for-approval", "never", "exec", "--sandbox", "read-only", "--cd", dir, "--json", "--color", "never", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--output-schema", "/tmp/schema.json"}
 	for _, flag := range []string{"hooks", "plugins", "apps", "multi_agent", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"} {
 		args = append(args, "--disable", flag)
 	}
 	args = append(args, "-c", `mcp_servers={}`) // Config files are masked by the outer sandbox as well.
+	if req.ProbeReply != "" {
+		args = append(args, "--skip-git-repo-check", "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "code_mode_host", "--disable", "memories", "--disable", "skill_search", "--disable", "computer_use", "--disable", "image_generation", "--disable", "view_image", "--enable", "skip_host_skill_discovery", "-c", `project_doc_max_bytes=0`, "-c", `model_instructions_file="/tmp/instructions.md"`, "-c", `model_reasoning_effort="low"`)
+	}
 	return append(args, "-"), nil
 }
 

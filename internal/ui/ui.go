@@ -49,15 +49,16 @@ type active struct {
 	lastHeartbeat time.Time
 }
 type UI struct {
-	Out      io.Writer
-	Err      io.Writer
-	Cleaner  safety.Cleaner
-	Options  Options
-	mu       sync.Mutex
-	active   map[string]active
-	animated bool
-	writeErr error
-	tick     int
+	Out        io.Writer
+	Err        io.Writer
+	Cleaner    safety.Cleaner
+	Options    Options
+	mu         sync.Mutex
+	active     map[string]active
+	animated   bool
+	writeErr   error
+	tick       int
+	inputDepth int
 }
 
 func New(out, stderr io.Writer, c safety.Cleaner, o Options) *UI {
@@ -157,6 +158,26 @@ func (u *UI) Emit(e Event) {
 	u.write(u.Err, text+"\n")
 }
 
+// Prompt suspends stage indicators until its returned function is called once.
+func (u *UI) Prompt(question string) func() {
+	u.mu.Lock()
+	u.inputDepth++
+	u.mu.Unlock()
+	u.Emit(Event{Kind: "question", Name: "Нужен ваш ответ", Message: question})
+	return func() {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		u.inputDepth--
+		if u.inputDepth == 0 {
+			now := u.Options.Now()
+			for id, a := range u.active {
+				a.lastHeartbeat = now
+				u.active[id] = a
+			}
+		}
+	}
+}
+
 // Run owns the ticker and returns only after all indicator work has stopped.
 func (u *UI) Run(ctx context.Context) {
 	ticks := u.Options.Ticks
@@ -183,7 +204,7 @@ func (u *UI) Run(ctx context.Context) {
 func (u *UI) heartbeat(now time.Time) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.Options.Quiet || len(u.active) == 0 {
+	if u.Options.Quiet || u.inputDepth > 0 || len(u.active) == 0 {
 		return
 	}
 	ids := make([]string, 0, len(u.active))
@@ -252,7 +273,7 @@ func (i *Input) Line(question string) (string, error) {
 	if !i.Interactive {
 		return "", errors.New("needs_input: " + question)
 	}
-	i.UI.Emit(Event{Kind: "question", Name: question})
+	defer i.UI.Prompt(question)()
 	line, err := i.ReadLine(i.Context)
 	if errors.Is(err, io.EOF) && line != "" {
 		err = nil
@@ -263,7 +284,7 @@ func (i *Input) Task() (string, error) {
 	if !i.Interactive {
 		return "", errors.New("needs_input: provide a workflow and task or --task-file")
 	}
-	i.UI.Emit(Event{Kind: "question", Name: "Что нужно сделать? Вставьте текст; завершите отдельной строкой :done"})
+	defer i.UI.Prompt("Что нужно сделать? Вставьте текст; завершите отдельной строкой :done")()
 	var b strings.Builder
 	for {
 		line, err := i.ReadLine(i.Context)

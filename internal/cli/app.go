@@ -207,6 +207,9 @@ func (a App) Run(ctx context.Context, args []string) int {
 	if task == "" && o.Command == "review" {
 		task = "Review the pinned current changes; report correctness and security findings without editing code."
 	}
+	if task == "" && o.Command == "ping" {
+		task = "Connection test: Codex ping, Claude pong."
+	}
 	if strings.TrimSpace(task) == "" {
 		task, err = input.Task()
 		if err != nil || task == "" {
@@ -326,6 +329,14 @@ func (a App) Run(ctx context.Context, args []string) int {
 	if runErr != nil && result.Outcome == "failed" {
 		interfaceUI.Emit(ui.Event{Kind: "error", Name: "Run failed", Message: result.Reason})
 	}
+	if o.Command == "ping" {
+		interfaceUI.Emit(ui.Event{Kind: "message", Name: "Проверка связи: " + result.Outcome, Message: "Artifacts: " + result.Artifacts})
+		text := result.Final
+		if result.Outcome != "success" {
+			text += "\n" + result.Outcome + " · " + result.Reason
+		}
+		return finish(text, result.ExitCode)
+	}
 	return finish(fmt.Sprintf("%s · %s · %s\nValidation: %s\nReview passes: %d/%d\nArtifacts: %s\n\n%s", result.Outcome, result.Reason, result.Finished.Sub(result.Started).Round(time.Second), result.Validation.Status, result.Budgets.ReviewPasses, c.Review.MaxPasses, result.Artifacts, result.Final), result.ExitCode)
 }
 
@@ -379,6 +390,13 @@ func (a App) dryRun(o Options, u *ui.UI) int {
 		if o.Command == "" || o.Command == d.Name {
 			fmt.Fprintf(&b, "%s · %s\n  %s\n", d.CLI, d.Access, d.Route)
 		}
+	}
+	if o.Command == "ping" {
+		b.WriteString("Два коротких read-only запроса; timeout на provider <=30s. Без JEV, gates, validation и retries.\n")
+		if err := u.Final(b.String()); err != nil {
+			return 1
+		}
+		return 0
 	}
 	fmt.Fprintf(&b, "Budgets: steps=%d review fixes=%d passes=%d validation repairs=%d requests=%d timeout=%s\nGates: task_readiness, diagnosis, plan_review, implementation_result, validation_failure, code_review, answer_review, review_verification\nOptional branches применяются только после engine policy.\n", c.Workflow.MaxSteps, c.Review.MaxIterations, c.Review.MaxPasses, c.ValidationRepair.MaxIterations, c.Decisions.MaxRequests, c.Workflow.Timeout)
 	if err := u.Final(b.String()); err != nil {

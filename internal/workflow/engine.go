@@ -513,6 +513,10 @@ func (s *session) prepare(ctx context.Context, who, stage, role string, mode age
 		return prepared{}, err
 	}
 	id := fmt.Sprintf("%02d-%s", len(s.run.Steps)+1, stage)
+	if role == "ping" {
+		prompt := fmt.Sprintf("Return only {\"reply\":%q}. Do not use tools.", extra)
+		return s.prepareRequest(who, role, agent.Request{StepID: id, Stage: stage, Prompt: prompt, Mode: agent.ReadOnly, ProbeReply: extra}, before), nil
+	}
 	contract := fmt.Sprintf("Workflow: %s\nStage: %s\nStepID: %s\nAccess: %s\nProject: %s\nSnapshot: %s\nInitial snapshot: %s\nReview base: %s\nMerge base: %s\nDocs scope: %v\nReturn schema_version=1. Evidence file references must be relative.\n", s.input.Workflow, stage, id, mode, s.input.Project.Root, before.ID, s.run.Initial.ID, s.input.Project.Base, s.input.Project.MergeBase, s.input.DocsPaths)
 	contextText := s.input.Project.Instructions + "\nInitial dirty paths:\n" + s.run.Initial.Status + "\n" + extra
 	if strings.Contains(stage, "code-review") || strings.Contains(stage, "code-re-review") || strings.Contains(stage, "targeted-code-verify") {
@@ -541,16 +545,25 @@ func (s *session) prepare(ctx context.Context, who, stage, role string, mode age
 	if err != nil {
 		return prepared{}, err
 	}
-	timeout := s.engine.Config.Agents.Claude.Timeout
+	return s.prepareRequest(who, role, agent.Request{StepID: id, Stage: stage, Prompt: prompt, Mode: mode, DocsPaths: s.input.DocsPaths}, before), nil
+}
+
+func (s *session) prepareRequest(who, role string, req agent.Request, before project.Snapshot) prepared {
+	req.ProjectDir = s.input.Project.Root
+	req.RunDir = s.engine.Store.Dir
+	req.Timeout = s.engine.Config.Agents.Claude.Timeout
 	if who == "codex" {
-		timeout = s.engine.Config.Agents.Codex.Timeout
+		req.Timeout = s.engine.Config.Agents.Codex.Timeout
 	}
-	step := Step{ID: id, Stage: stage, Agent: who, Access: mode, Started: time.Now(), Outcome: "running", Before: before.ID, Changed: []string{}}
+	if req.ProbeReply != "" {
+		req.Timeout = min(req.Timeout, 30*time.Second)
+	}
+	step := Step{ID: req.StepID, Stage: req.Stage, Agent: who, Access: req.Mode, Started: time.Now(), Outcome: "running", Before: before.ID, Changed: []string{}}
 	s.run.Steps = append(s.run.Steps, step)
 	if !slices.Contains(s.run.Agents, who) {
 		s.run.Agents = append(s.run.Agents, who)
 	}
-	return prepared{index: len(s.run.Steps) - 1, req: agent.Request{ProjectDir: s.input.Project.Root, RunDir: s.engine.Store.Dir, StepID: id, Stage: stage, Prompt: prompt, Mode: mode, Timeout: timeout, DocsPaths: s.input.DocsPaths}, who: who, mode: mode, role: role, before: before}, nil
+	return prepared{index: len(s.run.Steps) - 1, req: req, who: who, mode: req.Mode, role: role, before: before}
 }
 
 func (s *session) perform(ctx context.Context, p prepared) (agent.Result, Step, error) {
@@ -598,6 +611,9 @@ func (s *session) perform(ctx context.Context, p prepared) (agent.Result, Step, 
 		if reportErr := result.Report.Validate(p.req.StepID, p.req.Stage); reportErr != nil {
 			result.ReportError = reportErr.Error()
 		}
+	}
+	if err == nil && p.req.ProbeReply != "" && (result.ReportError != "" || result.Report.Markdown != p.req.ProbeReply || result.Report.Outcome != "completed") {
+		err = errors.New("connection probe returned unexpected reply")
 	}
 	record.Outcome = result.Report.Outcome
 	if result.ReportError != "" {

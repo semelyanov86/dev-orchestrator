@@ -35,6 +35,14 @@ func TestDryRunNoSubprocess(t *testing.T) {
 		t.Fatal("dryrun started process discovery")
 	}
 }
+
+func TestPingDryRun(t *testing.T) {
+	var out, stderr bytes.Buffer
+	a := App{In: strings.NewReader(""), Out: &out, Err: &stderr, Home: t.TempDir(), Cwd: t.TempDir(), Env: []string{"PATH=/does-not-exist"}}
+	if code := a.Run(t.Context(), []string{"ping", "--dry-run"}); code != 0 || !strings.Contains(out.String(), "Codex ping → Claude pong") || strings.Contains(out.String(), "Gates:") {
+		t.Fatalf("dry-run code=%d output=%s stderr=%s", code, out.String(), stderr.String())
+	}
+}
 func TestHelpWithoutGitOrConfig(t *testing.T) {
 	var out bytes.Buffer
 	a := App{In: strings.NewReader(""), Out: &out, Err: io.Discard, Home: t.TempDir(), Cwd: t.TempDir()}

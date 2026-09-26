@@ -29,6 +29,7 @@ func Catalog() []Definition {
 		{Name: "docs", CLI: "docs", Label: "Documentation", Access: "documentation_only", Route: "Claude fact-check/plan → Claude documentation → validation policy → Codex review; optional fixes"},
 		{Name: "chore", CLI: "chore", Label: "Maintenance / chore", Access: "local_write", Route: "Codex compatibility plan → Claude maintenance → task all → Codex review"},
 		{Name: "fix_review", CLI: "fix-review", Label: "Fix an existing review", Access: "local_write", Route: "Codex imported finding verification → Claude confirmed fixes → task all → Codex re-review", Input: "report"},
+		{Name: "ping", CLI: "ping", Label: "Connection test / ping-pong", Access: "read_only", Route: "Codex ping → Claude pong; two short replies, no JEV, reviews or validation"},
 	}
 }
 func Names() []string {

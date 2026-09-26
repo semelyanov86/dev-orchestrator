@@ -121,3 +121,63 @@ func TestInputMultilineAndCancellation(t *testing.T) {
 		t.Fatalf("input cancellation %v", err)
 	}
 }
+
+func TestInputPausesStageIndicators(t *testing.T) {
+	for _, tty := range []bool{false, true} {
+		name := "plain"
+		if tty {
+			name = "tty"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var stderr lockedBuffer
+				u := New(io.Discard, &stderr, safety.New(), Options{StderrTTY: tty, NoColor: true})
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				stopped := make(chan struct{})
+				go func() { u.Run(ctx); close(stopped) }()
+				u.Emit(Event{Kind: "start", ID: "route", Name: "Выбор workflow", Actor: "JEV"})
+				time.Sleep(time.Second)
+				synctest.Wait()
+				read, write := io.Pipe()
+				defer func() { _ = write.Close() }()
+				input := NewInput(read, true, u)
+				input.Context = ctx
+				answer := make(chan string, 1)
+				go func() {
+					line, err := input.Line("Введите номер workflow")
+					if err != nil {
+						t.Errorf("input: %v", err)
+					}
+					answer <- line
+				}()
+				synctest.Wait()
+				if !strings.Contains(stderr.String(), "Нужен ваш ответ") {
+					t.Error("prompt does not identify user input as the current state")
+				}
+				before := stderr.String()
+				time.Sleep(61 * time.Second)
+				synctest.Wait()
+				if stderr.String() != before {
+					t.Error("provider indicators continue while waiting for user input")
+				}
+				if _, err := io.WriteString(write, "5\n"); err != nil {
+					t.Fatal(err)
+				}
+				if got := <-answer; got != "5" {
+					t.Fatalf("answer = %q, want 5", got)
+				}
+				synctest.Wait()
+				before = stderr.String()
+				time.Sleep(31 * time.Second)
+				synctest.Wait()
+				if stderr.String() == before {
+					t.Error("active stage indicators did not resume after user input")
+				}
+				u.Emit(Event{Kind: "finish", ID: "route", Name: "Выбор workflow", Status: "completed"})
+				cancel()
+				<-stopped
+			})
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +15,17 @@ import (
 	"dev-orchestrator/internal/workflow"
 )
 
-type selector struct{ calls int }
+type selector struct {
+	calls    int
+	question string
+}
 
-func (s *selector) Line(string) (string, error) { s.calls++; return "bug", nil }
-func number(n float64) *float64                 { return &n }
+func (s *selector) Line(question string) (string, error) {
+	s.calls++
+	s.question = question
+	return "bug", nil
+}
+func number(n float64) *float64 { return &n }
 func routeResponse(conf float64) jev.Response {
 	probabilities := map[string]float64{}
 	for _, name := range workflow.Names() {
@@ -53,6 +61,34 @@ func TestJevRouterSuccessAndFallback(t *testing.T) {
 			if tt.name == "low confidence" && route.Telemetry == nil {
 				t.Fatal("rejected response telemetry lost")
 			}
+			if tt.source == "manual" {
+				if !strings.Contains(input.question, route.FallbackReason) || !strings.Contains(input.question, "Ручной выбор") {
+					t.Fatalf("fallback reason absent before user selection: %q", input.question)
+				}
+				if !strings.Contains(input.question, "Введите номер") {
+					t.Fatalf("selection instructions absent: %q", input.question)
+				}
+			}
 		})
+	}
+}
+
+func TestConnectionProbeLocalRouting(t *testing.T) {
+	for _, phrase := range []string{"проверяю связь", "Проверка связи!", "ping", "ping-pong", "это просто проверка. Ответь, что ты меня слышишь"} {
+		t.Run(phrase, func(t *testing.T) {
+			input := &selector{}
+			// A nil JEV client must remain unused; no routing request or manual selection.
+			for _, router := range []Router{JevRouter{Fallback: ManualRouter{Input: input}}, ManualRouter{Input: input}} {
+				r, err := router.Route(t.Context(), RouteInput{Task: phrase})
+				if err != nil || r.Workflow != "ping" || r.Source != "local" || input.calls != 0 {
+					t.Fatalf("probe route=%+v err=%v manual calls=%d", r, err, input.calls)
+				}
+			}
+		})
+	}
+	for _, phrase := range []string{"проверяю связь, затем исправь код", "add ping workflow", "исправь ping endpoint", "проанализируй проверку связи", ""} {
+		if ConnectionProbe(phrase) {
+			t.Fatalf("work request incorrectly routed to probe: %q", phrase)
+		}
 	}
 }

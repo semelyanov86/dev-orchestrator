@@ -10,6 +10,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Show Go toolchain
+        run: go version
       - uses: go-task/setup-task@v2
         with:
           version: '3.53.1'

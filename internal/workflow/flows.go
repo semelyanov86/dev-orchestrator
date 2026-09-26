@@ -15,6 +15,8 @@ import (
 
 func (s *session) execute(ctx context.Context) error {
 	switch s.input.Workflow {
+	case "ping":
+		return s.ping(ctx)
 	case "feature", "plan":
 		plan, err := s.stage(ctx, "claude", "plan", "plan", agent.ReadOnly, "")
 		if err != nil {

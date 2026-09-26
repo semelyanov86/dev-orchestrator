@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"dev-orchestrator/internal/config"
 	"dev-orchestrator/internal/router/jev"
@@ -44,15 +45,25 @@ type ManualRouter struct {
 	Reason string
 }
 
-func (m ManualRouter) Route(ctx context.Context, _ RouteInput) (RouteDecision, error) {
+func (m ManualRouter) Route(ctx context.Context, input RouteInput) (RouteDecision, error) {
 	if err := ctx.Err(); err != nil {
 		return RouteDecision{}, err
 	}
+	if ConnectionProbe(input.Task) {
+		return probeRoute(), nil
+	}
 	var b strings.Builder
+	b.WriteString("Ручной выбор workflow. ")
+	if m.Reason != "" {
+		fmt.Fprintf(&b, "%s (%s)\n", manualReason(m.Reason), m.Reason)
+	} else {
+		b.WriteByte('\n')
+	}
 	b.WriteString("Выберите workflow:\n")
 	for i, d := range workflow.Catalog() {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, d.Label)
 	}
+	b.WriteString("Введите номер или название workflow и нажмите Enter. Для отмены: Ctrl+C.")
 	answer, err := m.Input.Line(b.String())
 	if err != nil {
 		return RouteDecision{Source: "manual", FallbackReason: m.Reason}, err
@@ -67,6 +78,46 @@ func (m ManualRouter) Route(ctx context.Context, _ RouteInput) (RouteDecision, e
 	return RouteDecision{Workflow: d.Name, Source: "manual", Risk: "high", Complexity: "unknown", FallbackReason: m.Reason}, nil
 }
 
+// ConnectionProbe recognizes complete connection-test phrases, never mixed work requests.
+func ConnectionProbe(task string) bool {
+	task = strings.Map(func(r rune) rune {
+		if unicode.IsPunct(r) {
+			return ' '
+		}
+		return unicode.ToLower(r)
+	}, task)
+	task = strings.Join(strings.Fields(task), " ")
+	switch task {
+	case "ping", "ping pong", "проверяю связь", "проверь связь", "проверка связи", "тест связи", "проверка соединения", "connection test", "test connection", "это просто проверка ответь что ты меня слышишь":
+		return true
+	default:
+		return false
+	}
+}
+
+func probeRoute() RouteDecision {
+	return RouteDecision{Workflow: "ping", Source: "local", Risk: "low", Complexity: "trivial"}
+}
+
+func manualReason(reason string) string {
+	switch reason {
+	case "manual_config":
+		return "Включён ручной режим."
+	case "missing_api_key":
+		return "OpenRouter key не настроен; все workflows доступны вручную."
+	case "unsafe_task_input":
+		return "Текст задачи не отправлен JEV из-за возможных чувствительных данных."
+	case "jev_network_or_timeout":
+		return "Запрос JEV не завершился: сеть недоступна или истёк timeout."
+	case "request_budget_exhausted":
+		return "Лимит запросов JEV исчерпан."
+	case "invalid_or_low_confidence_choice", "invalid_or_low_confidence_score", "uncertain_noul":
+		return "Ответ JEV не прошёл проверку формата или уверенности."
+	default:
+		return "JEV недоступен или вернул некорректный ответ."
+	}
+}
+
 type JevRouter struct {
 	Client   *jev.Client
 	Config   config.Router
@@ -75,6 +126,12 @@ type JevRouter struct {
 }
 
 func (j JevRouter) Route(ctx context.Context, input RouteInput) (RouteDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return RouteDecision{}, err
+	}
+	if ConnectionProbe(input.Task) {
+		return probeRoute(), nil
+	}
 	if !safety.SafeTask(input.Task, j.Cleaner) {
 		return j.fallback(ctx, input, "unsafe_task_input")
 	}

@@ -107,7 +107,13 @@ func (f *fakeEvents) Emit(e ui.Event) {
 }
 
 func goodReport(r agent.Request) report.StepReport {
-	return report.StepReport{SchemaVersion: 1, StepID: r.StepID, Stage: r.Stage, Outcome: "completed", Summary: "stage completed", Markdown: "Synthetic result for " + r.Stage, Requirements: []report.Requirement{{ID: "task", Description: "authorized task result", Status: "satisfied", Evidence: []report.Evidence{{Kind: "observation", Reference: "stage_contract", Detail: "checked current task"}}}}, Findings: []report.Finding{}, MissingEvidence: []string{}, Disagreements: []string{}, UnresolvedQuestions: []string{}, ScopeChanges: []string{}, ArtifactReferences: []string{}, Diagnosis: "local_code", FailureClass: "not_applicable", Verdict: "pass"}
+	markdown := "Synthetic result for " + r.Stage
+	id := "task"
+	if r.ProbeReply != "" {
+		markdown = r.ProbeReply
+		id = r.StepID
+	}
+	return report.StepReport{SchemaVersion: 1, StepID: r.StepID, Stage: r.Stage, Outcome: "completed", Summary: "stage completed", Markdown: markdown, Requirements: []report.Requirement{{ID: id, Description: "authorized task result", Status: "satisfied", Evidence: []report.Evidence{{Kind: "observation", Reference: "stage_contract", Detail: "checked current task"}}}}, Findings: []report.Finding{}, MissingEvidence: []string{}, Disagreements: []string{}, UnresolvedQuestions: []string{}, ScopeChanges: []string{}, ArtifactReferences: []string{}, Diagnosis: "local_code", FailureClass: "not_applicable", Verdict: "pass"}
 }
 func finding(status string) report.Finding {
 	return report.Finding{ID: "f1", Severity: "high", Category: "correctness", Status: status, Problem: "wrong behavior", Impact: "incorrect result", SuggestedDirection: "fix the behavior", File: "main.go", Line: 1, Evidence: []report.Evidence{{Kind: "file", Reference: "main.go:1", Detail: "current implementation evidence"}}, Rationale: "verified locally"}

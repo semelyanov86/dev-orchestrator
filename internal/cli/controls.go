@@ -19,7 +19,7 @@ type questionBroker struct {
 func (b *questionBroker) ask(ctx context.Context, u *ui.UI, question string) (string, error) {
 	b.waiting.Store(true)
 	defer b.waiting.Store(false)
-	u.Emit(ui.Event{Kind: "question", Name: "Нужен ваш ответ", Message: question})
+	defer u.Prompt(question)()
 	select {
 	case answer := <-b.answers:
 		return answer, nil

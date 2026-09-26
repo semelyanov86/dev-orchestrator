@@ -6,7 +6,7 @@
 
 ## Установка
 
-Поддерживается Linux с `bubblewrap` (`bwrap`) и разрешёнными user namespaces. Для сборки нужны Go 1.26, Task и golangci-lint v2. Для workflows нужны Git, Task, авторизованные Claude Code и Codex CLI; SSH нужен только для server profiles. Проверенные CLI: Claude Code 2.1.280, Codex 0.157.1. Перед run адаптеры проверяют доступные flags и sandbox; несовместимый CLI прекращает run до writer.
+Поддерживается Linux с `bubblewrap` (`bwrap`) и разрешёнными user namespaces. Для сборки нужны Go 1.26.6 или новее, Task и golangci-lint v2. Минимальный patch release закреплён в `go.mod`, который также определяет Go toolchain в CI. Для workflows нужны Git, Task, авторизованные Claude Code и Codex CLI; SSH нужен только для server profiles. Проверенные CLI: Claude Code 2.1.280, Codex 0.157.1. Перед run адаптеры проверяют доступные flags и sandbox; несовместимый CLI прекращает run до writer.
 
 Из каталога исходников:
 
@@ -35,9 +35,10 @@ dev
 
 ## Запуск
 
-`dev` без аргументов принимает многострочную задачу; завершите её строкой `:done`. Без JEV выберите workflow из меню. Explicit commands обходят начальный router:
+`dev` без аргументов принимает многострочную задачу; завершите её строкой `:done`. Если нужен ручной выбор, перед меню показывается причина. Введите номер или название workflow и нажмите Enter (например, `5` или `research` для вопроса). Статус «Нужен ваш ответ» означает ожидание ввода; индикаторы agents/JEV на это время приостановлены. Explicit commands обходят начальный router:
 
 ```bash
+dev ping
 dev feature "Add bulk cancellation"
 dev bug "Duplicate appointments are created"
 dev bug --server production "API intermittently returns 502"
@@ -54,6 +55,10 @@ dev docs --docs-path documentation "Update the API documentation"
 dev chore "Update CI for the current Go version"
 dev fix-review --report /path/to/review.md "Fix confirmed findings"
 ```
+
+`dev ping` проверяет связь с установленными CLI двумя короткими запросами: Codex отвечает `ping`, Claude — `pong`. JEV, планирование, review, validation и повторные запросы не запускаются. На каждый provider действует timeout не более 30s. Вместо project instructions и полного report schema используется минимальный контракт `{"reply":"ping"}` / `{"reply":"pong"}`; tools выключены, cwd — пустой временный каталог, доступ к проекту остаётся read-only. Внутренний report и artifacts формируются локально из проверенного ответа. Служебный контекст самих CLI всё равно может расходовать tokens; точное количество не гарантируется.
+
+В интерактивном `dev` фразы `проверяю связь`, `проверка связи`, `ping`, `ping pong` и `это просто проверка. Ответь, что ты меня слышишь` выбирают `ping` локально, без JEV и ручного меню. Распознаётся вся фраза целиком; просьба проверить связь и затем изменить код проходит обычный routing.
 
 Для большого текста используйте `--task-file path` или `--task-file -` (stdin до EOF). `--no-jev` отключает initial JEV routing и subsequent JEV decisions. Non-interactive запуск с недостающим workflow, plan/report или обязательным scope сохраняет вопрос и завершает `needs_input`, без ожидания ввода.
 
@@ -86,6 +91,7 @@ dev fix-review --report /path/to/review.md "Fix confirmed findings"
 | docs | Claude fact-check/plan → согласованные documentation paths → validation policy → Codex review |
 | chore | Codex compatibility/impact plan → Claude tooling/config/dependencies → validation/review |
 | fix-review | Codex проверяет импортированные findings → Claude confirmed fixes → validation/re-review |
+| ping | Codex `ping` → Claude `pong`; только проверка связи, без JEV/review/validation |
 
 Planning, investigations и reviews имеют native read-only permissions плюс внешний filesystem sandbox. Incident initial reports недоступны другому investigator до synthesis. Optional parallel investigations доступны для diagnosis/research, если router выбрал эту branch. На canonical project root действует межпроцессный lock: максимум один modifying run.
 
