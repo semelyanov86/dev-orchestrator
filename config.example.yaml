@@ -1,0 +1,60 @@
+# Global: ~/.config/dev-agent/config.yaml; project: .dev-agent.yaml
+# Real keys belong only in private global config (0600) or environment.
+validation:
+  command: [task, all]
+  timeout: 20m
+agents:
+  claude:
+    command: claude
+    timeout: 30m
+  codex:
+    command: codex
+    timeout: 30m
+router:
+  type: jev
+  confidence:
+    workflow: 0.75
+    complexity: 0.70
+    risk: 0.80
+  noul_yes: 0.85
+  noul_no: 0.15
+decisions:
+  type: jev
+  max_requests_per_run: 12
+  confidence:
+    task_readiness: 0.80
+    diagnosis: 0.85
+    plan_review: 0.85
+    implementation_result: 0.80
+    validation_failure: 0.85
+    code_review: 0.90
+    answer_review: 0.85
+    review_verification: 0.90
+  noul_yes: 0.85
+  noul_no: 0.15
+openrouter:
+  base_url: https://openrouter.ai
+  api_key: ""
+  jev_model: ~typesafe/jev-latest
+  timeout: 10s
+review:
+  max_iterations: 2
+  max_passes: 3
+workflow:
+  timeout: 2h
+  max_steps: 40
+  max_plan_revisions: 2
+  max_investigation_rounds: 2
+  max_answer_revisions: 2
+  max_implementation_rounds: 2
+  max_no_progress_rounds: 2
+validation_repair:
+  max_iterations: 2
+servers: {}
+# Example profile:
+# servers:
+#   production:
+#     host: server.example.com
+#     user: deploy
+#     port: 22
+#     project_path: /srv/app

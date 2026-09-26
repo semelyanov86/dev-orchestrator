@@ -2,12 +2,67 @@
 
 version: '3'
 
-vars:
-  GREETING: Hello, world!
-
 tasks:
   default:
-    desc: Print a greeting message
+    desc: Показать команды и использование dev
     cmds:
-      - echo "{{.GREETING}}"
-    silent: true
+      - task: help
+  fmt:
+    desc: Форматировать Go source
+    cmds:
+      - gofmt -w cmd internal prompts
+  fmt-check:
+    desc: Проверить форматирование без изменения файлов
+    cmds:
+      - bash scripts/check-format.sh
+  vet:
+    desc: Go vet
+    cmds:
+      - go vet ./...
+  test:
+    desc: Unit tests без настоящих providers
+    cmds:
+      - go test ./...
+  race:
+    desc: Race detection
+    cmds:
+      - go test -race ./...
+  build:
+    desc: Собрать build/dev
+    cmds:
+      - mkdir -p build
+      - go build -trimpath -o build/dev ./cmd/dev
+  lint:
+    desc: Golangci-lint v2 (обязательный prerequisite)
+    cmds:
+      - golangci-lint run ./...
+  all:
+    desc: Canonical validation — format, vet, test, lint, build
+    cmds:
+      - task: fmt-check
+      - task: vet
+      - task: test
+      - task: lint
+      - task: build
+  install:
+    desc: Идемпотентно установить ~/.local/bin/dev
+    cmds:
+      - task: build
+      - mkdir -p "$HOME/.local/bin"
+      - install -m 0755 build/dev "$HOME/.local/bin/dev"
+      - bash scripts/check-path.sh
+  clean:
+    desc: Удалить только известный generated binary
+    cmds:
+      - rm -f build/dev
+  help:
+    desc: Все tasks и инструкция запуска на русском
+    cmds:
+      - task --list-all
+      - go run ./cmd/dev --help
+  smoke:
+    desc: Opt-in read-only smoke установленного Claude/Codex; JEV только при key
+    cmds:
+      - go test -count=1 -tags=integration -run TestReadOnlyProviders -v ./internal/agent -timeout 5m
+      - go test -count=1 -tags=integration -run TestLiveNativeDecisions -v ./internal/router/jev -timeout 30s
+      - go test -count=1 -tags=integration -run TestLiveRouting -v ./internal/router -timeout 30s
