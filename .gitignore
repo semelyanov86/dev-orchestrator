@@ -1,0 +1,54 @@
+# Generated binaries and build output
+/dev
+/dev.exe
+/bin/
+/build/
+/dist/
+*.test
+*.exe~
+
+# Test coverage and profiling output (keep testdata fixtures visible)
+/coverage/
+/coverage.out
+/coverage.html
+*.coverprofile
+*.prof
+*.pprof
+
+# Local Go workspace and generated dependencies
+/go.work
+/go.work.sum
+/vendor/
+
+# Task cache and local scratch directories
+/.task/
+/.cache/
+/tmp/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+/.dev-agent.local.yaml
+/.secrets/
+/.claude/settings.local.json
+/.claude/settings.local.*.json
+/.codex/config.local.toml
+
+# Runtime artifacts belong in ~/.local/state/dev-agent/runs/
+/runs/
+/.dev-agent/runs/
+/logs/
+
+# IDE and OS files
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Keep .agents/skills/, .claude/skills/, skills-lock.json,
+# go.mod, go.sum, .env.example and shared .dev-agent.yaml versioned.
