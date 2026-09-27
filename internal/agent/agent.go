@@ -221,7 +221,9 @@ func cleanReport(r report.StepReport, c safety.Cleaner) report.StepReport {
 func (c *CLI) arguments(req Request) ([]string, error) {
 	if c.Provider == "claude" {
 		tools := "Read,Glob,Grep"
-		mode := "plan"
+		// Native plan mode requires a plan-file write and ExitPlanMode approval.
+		// Headless stages return plans in reports; tool and filesystem limits enforce read-only access.
+		mode := "dontAsk"
 		if req.Mode != ReadOnly {
 			tools += ",Edit,Write"
 			mode = "acceptEdits"
@@ -238,6 +240,9 @@ func (c *CLI) arguments(req Request) ([]string, error) {
 			args = append(args, "--safe-mode", "--effort", "low", "--system-prompt", "Connection test. Return only the requested JSON reply.")
 		} else {
 			args = append(args, "--json-schema", report.Schema())
+		}
+		if req.Mode == ReadOnly && req.ProbeReply == "" {
+			args = append(args, "--allowedTools", tools)
 		}
 		if req.Mode == DocsOnly {
 			if len(req.DocsPaths) == 0 {

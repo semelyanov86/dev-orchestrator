@@ -63,6 +63,9 @@ func TestReadOnlyProviders(t *testing.T) {
 			if result.Report.Outcome != "completed" || len(result.Report.Requirements) != 1 || result.Report.Requirements[0].Status != "satisfied" {
 				t.Fatalf("smoke task incomplete: %s", result.Report.Markdown)
 			}
+			if len(result.Report.UnresolvedQuestions) != 0 {
+				t.Fatalf("read-only smoke requires user input: %v", result.Report.UnresolvedQuestions)
+			}
 			after, err := inspector.Snapshot(t.Context(), dir)
 			if err != nil {
 				t.Fatal(err)

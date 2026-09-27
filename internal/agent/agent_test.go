@@ -100,11 +100,43 @@ func TestCLIArgsSandboxAndInput(t *testing.T) {
 			if !masked {
 				t.Fatal("project config was not masked")
 			}
-			if provider == "claude" && !strings.Contains(argv, "--tools Read,Glob,Grep --permission-mode plan") {
+			if provider == "claude" && !strings.Contains(argv, "--tools Read,Glob,Grep --permission-mode dontAsk") {
 				t.Fatal("read-only tool limit missing")
 			}
 			if provider == "codex" && !strings.Contains(argv, "--sandbox read-only") {
 				t.Fatal("native sandbox missing")
+			}
+			if !strings.Contains(argv, "--ro-bind "+dir+" "+dir) ||
+				strings.Contains(argv, "--bind "+dir+" "+dir) {
+				t.Fatal("read-only stage exposes a writable project")
+			}
+		})
+	}
+}
+
+func TestClaudeReadOnlyStagesDoNotRequirePlanApproval(t *testing.T) {
+	c := CLI{Provider: "claude"}
+	for _, stage := range []string{"plan", "diagnosis-verify", "answer-review", "review-verify"} {
+		t.Run(stage, func(t *testing.T) {
+			args, err := c.arguments(Request{Stage: stage, Mode: ReadOnly})
+			if err != nil {
+				t.Fatal(err)
+			}
+			flags := map[string]string{}
+			for i, arg := range args {
+				if strings.HasPrefix(arg, "--") && i+1 < len(args) {
+					flags[arg] = args[i+1]
+				}
+			}
+			if flags["--permission-mode"] != "dontAsk" {
+				t.Errorf("read-only stage enters interactive permission mode: %q", flags["--permission-mode"])
+			}
+			if flags["--tools"] != "Read,Glob,Grep" || flags["--allowedTools"] != "Read,Glob,Grep" {
+				t.Errorf("read-only tools are unavailable or allow writes: tools=%q allowed=%q",
+					flags["--tools"], flags["--allowedTools"])
+			}
+			if flags["--permission-prompts"] != "none" {
+				t.Error("headless stage permits a hidden permission prompt")
 			}
 		})
 	}
