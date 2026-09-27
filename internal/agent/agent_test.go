@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,11 +18,12 @@ import (
 type fakeExecutor struct {
 	req    runner.Request
 	output runner.Result
+	err    error
 }
 
 func (f *fakeExecutor) Run(_ context.Context, req runner.Request) (runner.Result, error) {
 	f.req = req
-	return f.output, nil
+	return f.output, f.err
 }
 func fixtureReport() report.StepReport {
 	return report.StepReport{SchemaVersion: 1, StepID: "01", Stage: "review", Outcome: "completed", Summary: "done", Markdown: "done", Requirements: []report.Requirement{{ID: "task", Description: "task", Status: "satisfied", Evidence: []report.Evidence{{Kind: "observation", Reference: "stage", Detail: "checked"}}}}, Findings: []report.Finding{}, MissingEvidence: []string{}, Disagreements: []string{}, UnresolvedQuestions: []string{}, ScopeChanges: []string{}, ArtifactReferences: []string{}, Diagnosis: "not_applicable", FailureClass: "not_applicable", Verdict: "pass"}
@@ -80,8 +82,23 @@ func TestCLIArgsSandboxAndInput(t *testing.T) {
 			if executor.req.Command != "bwrap" || strings.Contains(argv, "do-not-execute") || executor.req.Input != "task with $(do-not-execute)" {
 				t.Fatal("prompt escaped stdin boundary")
 			}
-			if !strings.Contains(argv, "--tmpfs "+filepath.Join(home, ".ssh")) || !strings.Contains(argv, "--ro-bind /dev/null "+filepath.Join(dir, ".codex", "config.toml")) {
+			if !strings.Contains(argv, "--tmpfs "+filepath.Join(home, ".ssh")) {
 				t.Fatal("credentials/project mcp config exposed")
+			}
+			masked := false
+			for i, arg := range executor.req.Args {
+				if arg != "--ro-bind" || executor.req.Args[i+2] != filepath.Join(dir, ".codex", "config.toml") {
+					continue
+				}
+				mask := executor.req.Args[i+1]
+				// Run removes its private runtime directory before returning.
+				if filepath.Base(mask) != "empty-config" {
+					t.Fatalf("configuration mask is not a regular file: %s", mask)
+				}
+				masked = true
+			}
+			if !masked {
+				t.Fatal("project config was not masked")
 			}
 			if provider == "claude" && !strings.Contains(argv, "--tools Read,Glob,Grep --permission-mode plan") {
 				t.Fatal("read-only tool limit missing")
@@ -90,6 +107,49 @@ func TestCLIArgsSandboxAndInput(t *testing.T) {
 				t.Fatal("native sandbox missing")
 			}
 		})
+	}
+}
+
+func TestSandboxUsesReadableEmptyConfigMask(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("untrusted=true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := CLI{Provider: "codex", Home: t.TempDir()}
+	args, err := c.sandbox(Request{ProjectDir: dir, Mode: ReadOnly}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, arg := range args {
+		if arg != "--ro-bind" || args[i+2] != path {
+			continue
+		}
+		info, err := os.Stat(args[i+1])
+		if err != nil || !info.Mode().IsRegular() || info.Size() != 0 || info.Mode().Perm() != 0600 {
+			t.Fatalf("unreadable or unsafe configuration mask: %v %v", info, err)
+		}
+		return
+	}
+	t.Fatal("configuration not masked")
+}
+
+func TestCLIProcessFailureIncludesCleanedStderr(t *testing.T) {
+	cause := errors.New("process bwrap exit 1")
+	executor := &fakeExecutor{
+		output: runner.Result{ExitCode: 1, Stderr: "\x1b[31mconfig.toml: Permission denied local-test-credential\x1b[0m"},
+		err:    cause,
+	}
+	c := CLI{Provider: "codex", Command: "codex", Exec: executor, Home: t.TempDir(), Cleaner: safety.New("local-test-credential")}
+	result, err := c.Run(t.Context(), Request{ProjectDir: t.TempDir(), Mode: ReadOnly, Timeout: time.Second})
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "config.toml: Permission denied [REDACTED]") || result.ExitCode != 1 {
+		t.Fatalf("process diagnostic lost: result=%+v err=%v", result, err)
+	}
+	if strings.ContainsAny(err.Error()+result.ErrorOutput, "\x1b\r") || strings.Contains(err.Error()+result.ErrorOutput, "local-test-credential") {
+		t.Fatal("unsafe stderr escaped cleaning")
 	}
 }
 func TestProviderEnvelopeFailures(t *testing.T) {

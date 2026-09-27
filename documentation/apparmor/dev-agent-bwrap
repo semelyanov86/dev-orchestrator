@@ -1,0 +1,8 @@
+# Allow the system bubblewrap executable to create its sandbox on Ubuntu 24.04.
+# This applies to every invocation of /usr/bin/bwrap, including other applications.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile dev-agent-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

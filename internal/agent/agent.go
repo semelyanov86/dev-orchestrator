@@ -78,11 +78,35 @@ func (c *CLI) Preflight(ctx context.Context, dir string) error {
 			return fmt.Errorf("%s lacks required capability %s", c.Provider, flag)
 		}
 	}
-	_, err = c.Exec.Run(ctx, runner.Request{Command: "bwrap", Args: []string{"--ro-bind", "/", "/", "--unshare-user", "--die-with-parent", "/bin/true"}, Dir: dir, Timeout: 10 * time.Second})
+	return CheckSandbox(ctx, c.Exec, dir, c.Cleaner)
+}
+
+// CheckSandbox probes filesystem isolation without launching a provider or writing to the project.
+func CheckSandbox(ctx context.Context, executor Executor, dir string, cleaner safety.Cleaner) error {
+	result, err := executor.Run(ctx, runner.Request{
+		Command: "bwrap",
+		Args: []string{
+			"--unshare-user", "--unshare-pid", "--die-with-parent",
+			"--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "/bin/true",
+		},
+		Dir: dir, Timeout: 10 * time.Second,
+	})
 	if err != nil {
-		return fmt.Errorf("filesystem sandbox unavailable: %w", err)
+		detail := stderrSummary(result.Stderr, cleaner)
+		if detail != "" {
+			return fmt.Errorf("filesystem sandbox unavailable: %w; bwrap stderr: %s; check user namespace/AppArmor permissions (README: Sandbox setup)", err, detail)
+		}
+		return fmt.Errorf("filesystem sandbox unavailable: %w; check bubblewrap installation and user namespace/AppArmor permissions (README: Sandbox setup)", err)
 	}
 	return nil
+}
+
+func stderrSummary(stderr string, cleaner safety.Cleaner) string {
+	detail := strings.TrimSpace(cleaner.Clean(stderr))
+	if len(detail) > 2048 {
+		return detail[:2048] + " [truncated]"
+	}
+	return detail
 }
 
 func (c *CLI) Run(ctx context.Context, req Request) (Result, error) {
@@ -132,6 +156,9 @@ func (c *CLI) Run(ctx context.Context, req Request) (Result, error) {
 	result.ErrorOutput = c.Cleaner.Clean(output.Stderr)
 	result.ExitCode = output.ExitCode
 	if runErr != nil {
+		if detail := stderrSummary(output.Stderr, c.Cleaner); detail != "" {
+			return result, fmt.Errorf("%s agent process failed: %w; stderr: %s", c.Provider, runErr, detail)
+		}
 		return result, runErr
 	}
 	if output.Truncated {
@@ -250,6 +277,10 @@ func (c *CLI) arguments(req Request) ([]string, error) {
 }
 
 func (c *CLI) sandbox(req Request, runtimeDir string) ([]string, error) {
+	emptyConfig := filepath.Join(runtimeDir, "empty-config")
+	if err := os.WriteFile(emptyConfig, nil, 0600); err != nil {
+		return nil, fmt.Errorf("prepare sandbox config mask: %w", err)
+	}
 	args := []string{"--unshare-user", "--unshare-pid", "--die-with-parent", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--bind", runtimeDir, "/tmp", "--setenv", "TMPDIR", "/tmp", "--chdir", req.ProjectDir}
 	// Provider authentication/runtime storage remains available; project/artifact permissions are separate.
 	for _, path := range []string{filepath.Join(c.Home, "."+c.Provider)} {
@@ -305,11 +336,12 @@ func (c *CLI) sandbox(req Request, runtimeDir string) ([]string, error) {
 	if _, err := os.Lstat(gitPath); err == nil {
 		args = append(args, "--ro-bind", gitPath, gitPath)
 	}
+	// Use a regular empty file: /dev/null bind mounts cannot be read on nodev mounts.
 	// Mask every project/ancestor Codex config: empty map overrides alone do not disable MCP.
 	for dir := req.ProjectDir; ; dir = filepath.Dir(dir) {
 		path := filepath.Join(dir, ".codex", "config.toml")
 		if _, err := os.Stat(path); err == nil {
-			args = append(args, "--ro-bind", "/dev/null", path)
+			args = append(args, "--ro-bind", emptyConfig, path)
 		}
 		if filepath.Dir(dir) == dir {
 			break
@@ -317,7 +349,7 @@ func (c *CLI) sandbox(req Request, runtimeDir string) ([]string, error) {
 	}
 	for _, path := range []string{filepath.Join(c.Home, ".codex", "config.toml"), filepath.Join(c.Home, ".config", "dev-agent", "config.yaml"), filepath.Join(req.ProjectDir, ".dev-agent.yaml"), filepath.Join(req.ProjectDir, ".env")} {
 		if _, err := os.Stat(path); err == nil {
-			args = append(args, "--ro-bind", "/dev/null", path)
+			args = append(args, "--ro-bind", emptyConfig, path)
 		}
 	}
 	// Initial incident agents cannot inspect another agent's run artifacts before synthesis.

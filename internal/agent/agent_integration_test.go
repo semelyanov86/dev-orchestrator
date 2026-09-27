@@ -29,6 +29,12 @@ func TestReadOnlyProviders(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Synthetic smoke\nThis repository contains no customer data or secrets.\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Mkdir(filepath.Join(dir, ".codex"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".codex", "config.toml"), []byte("invalid project config must be masked\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			git := exec.Command("git", "init", "-q", dir)
 			if out, err := git.CombinedOutput(); err != nil {
 				t.Fatalf("synthetic Git init %v %s", err, out)
@@ -65,6 +71,50 @@ func TestReadOnlyProviders(t *testing.T) {
 				t.Fatal("provider modified synthetic project")
 			}
 			t.Logf("%s: %s; unchanged snapshot", name, result.Report.Markdown)
+		})
+	}
+}
+
+func TestSandboxConfigMasksReadable(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bubblewrap not installed")
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			dir := t.TempDir()
+			home := t.TempDir()
+			paths := []string{
+				filepath.Join(dir, ".codex", "config.toml"),
+				filepath.Join(home, ".codex", "config.toml"),
+				filepath.Join(home, ".config", "dev-agent", "config.yaml"),
+				filepath.Join(dir, ".dev-agent.yaml"),
+				filepath.Join(dir, ".env"),
+			}
+			for _, path := range paths {
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("must remain hidden\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := CLI{Provider: provider, Home: home}
+			args, err := c.sandbox(Request{ProjectDir: dir, Mode: ReadOnly}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			args = append(args, "/usr/bin/cat")
+			args = append(args, paths...)
+			result, err := runner.New().Run(t.Context(), runner.Request{Command: "bwrap", Args: args, Dir: dir, Timeout: 10 * time.Second})
+			if err != nil || result.Stdout != "" {
+				t.Fatalf("masked configs unreadable or exposed: %v stdout=%q stderr=%s", err, result.Stdout, result.Stderr)
+			}
+			for _, path := range paths {
+				content, err := os.ReadFile(path)
+				if err != nil || string(content) != "must remain hidden\n" {
+					t.Fatalf("host config modified: %s %v", path, err)
+				}
+			}
 		})
 	}
 }

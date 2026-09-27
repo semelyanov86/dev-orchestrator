@@ -307,7 +307,10 @@ func (a App) Run(ctx context.Context, args []string) int {
 	claude := &agent.CLI{Provider: "claude", Command: c.Agents.Claude.Command, Exec: executor, Home: a.Home, StateRoot: artifacts.Root(a.Home), Cleaner: cleaner}
 	codex := &agent.CLI{Provider: "codex", Command: c.Agents.Codex.Command, Exec: executor, Home: a.Home, StateRoot: artifacts.Root(a.Home), Cleaner: cleaner}
 	interfaceUI.Emit(ui.Event{Kind: "start", ID: "preflight", Name: "Проверка CLI capabilities и sandbox", Actor: "local policy"})
-	preflightErr := errors.Join(claude.Preflight(ctx, p.Root), codex.Preflight(ctx, p.Root))
+	preflightErr := claude.Preflight(ctx, p.Root)
+	if preflightErr == nil {
+		preflightErr = codex.Preflight(ctx, p.Root)
+	}
 	interfaceUI.Emit(ui.Event{Kind: "finish", ID: "preflight", Name: "CLI preflight", Status: status(preflightErr)})
 	if preflightErr != nil {
 		return fail("failed", preflightErr.Error())
@@ -405,7 +408,7 @@ func (a App) dryRun(o Options, u *ui.UI) int {
 	return 0
 }
 
-func (a App) doctor(ctx context.Context, c config.Config, p project.Project, projectErr error, executor *runner.Runner, u *ui.UI) int {
+func (a App) doctor(ctx context.Context, c config.Config, p project.Project, projectErr error, executor agent.Executor, u *ui.UI) int {
 	var b strings.Builder
 	b.WriteString("Environment\n")
 	failed := false
@@ -416,6 +419,12 @@ func (a App) doctor(ctx context.Context, c config.Config, p project.Project, pro
 		} else {
 			fmt.Fprintf(&b, "[ok] %s\n", command)
 		}
+	}
+	if err := agent.CheckSandbox(ctx, executor, a.Cwd, safety.New(c.OpenRouter.APIKey)); err != nil {
+		fmt.Fprintf(&b, "[!] %s\n", err)
+		failed = true
+	} else {
+		b.WriteString("[ok] filesystem sandbox\n")
 	}
 	b.WriteString("[ok] config valid\nRouter\n")
 	if c.OpenRouter.APIKey == "" || c.Decisions.MaxRequests == 0 || c.Router.Type == "manual" {

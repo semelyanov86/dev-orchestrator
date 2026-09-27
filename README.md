@@ -31,7 +31,33 @@ dev doctor
 dev
 ```
 
-`doctor` проверяет инструменты, config, Git root, offline listing validation target, SSH metadata и при наличии ключа — маленький JEV health request. Он не выполняет `task all`; отсутствие OpenRouter — нормальное состояние. Рабочий проект определяется через Git, включая nested directories и worktrees.
+`doctor` проверяет инструменты, работоспособность filesystem sandbox (через `/bin/true`), config, Git root, offline listing validation target, SSH metadata и при наличии ключа — маленький JEV health request. Он не выполняет `task all`; отсутствие OpenRouter — нормальное состояние. Рабочий проект определяется через Git, включая nested directories и worktrees.
+
+### Sandbox setup
+
+Если preflight сообщает `filesystem sandbox unavailable`, проверьте sandbox отдельно:
+
+```bash
+bwrap --unshare-user --unshare-pid --die-with-parent \
+  --ro-bind / / --proc /proc --dev /dev /bin/true
+```
+
+`dev doctor --no-jev` выполняет эту проверку без запросов к providers и показывает очищенный stderr. Preflight прекращает run до запуска agents, если sandbox недоступен.
+
+На Ubuntu 24.04 ошибка `bwrap: setting up uid map: Permission denied` может означать отсутствие AppArmor-профиля, разрешающего user namespaces для `bwrap`. Проверьте `kernel.apparmor_restrict_unprivileged_userns` и существующие профили для фактического пути executable. [Ubuntu описывает эти ограничения](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/) и [настройку профиля для bwrap](https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007). Изменение системной политики требует решения администратора и не выполняется при `dev` или `task install`.
+
+Для `/usr/bin/bwrap` без существующего профиля подготовлен [профиль Ubuntu 24.04](documentation/apparmor/dev-agent-bwrap). После согласования с администратором установите его из каталога исходников:
+
+```bash
+sudo install -o root -g root -m 0644 documentation/apparmor/dev-agent-bwrap \
+  /etc/apparmor.d/dev-agent-bwrap
+sudo apparmor_parser -r /etc/apparmor.d/dev-agent-bwrap
+dev doctor --no-jev
+```
+
+Это разрешение действует на все вызовы `/usr/bin/bwrap`. Глобальное ограничение AppArmor остаётся включённым; filesystem isolation и native read-only permissions агентов сохраняются. Не перезаписывайте существующие профили для этого executable.
+
+При другой ошибке используйте фактический stderr: ограничения контейнера, отключённые user namespaces или отсутствие `bubblewrap` требуют отдельной настройки.
 
 ## Запуск
 
